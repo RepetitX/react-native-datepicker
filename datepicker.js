@@ -6,13 +6,13 @@ import {
   Image,
   Modal,
   TouchableHighlight,
-  DatePickerAndroid,
   TimePickerAndroid,
   DatePickerIOS,
   Platform,
   Animated,
   Keyboard
 } from 'react-native';
+import { DatePickerAndroid } from 'rn-datepicker-nougat-spinner-fix';
 import Style from './style';
 import Moment from 'moment';
 
