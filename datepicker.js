@@ -1,577 +1,437 @@
 import React, {Component} from 'react';
-import {View, TouchableOpacity, Linking} from 'react-native';
+import PropTypes from 'prop-types';
 import {
-    Form,
-    Item,
-    Label,
-    Input,
-    Button,
-    Text,
-    Content,
-    Spinner
-} from 'native-base';
-import DatePicker from 'react-native-datepicker';
-import moment from "moment/moment";
-import {connect} from 'react-redux';
+  View,
+  Text,
+  Image,
+  Modal,
+  TouchableHighlight,
+  Platform,
+  Animated,
+  Keyboard
+} from 'react-native';
+import Style from './style';
+import Moment from 'moment';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
-import {colors} from '/Config';
-import request from '/RepetitAppCore/httpTransport';
-import PhoneInput from '/Components/Teacher/Pupils/PhoneInput';
-import {validators} from '/Utils';
-import repetitAppCore from '/RepetitAppCore/index';
-import bus from '/RepetitAppCore/Bus';
+const FORMATS = {
+  'date': 'YYYY-MM-DD',
+  'datetime': 'YYYY-MM-DD HH:mm',
+  'time': 'HH:mm'
+};
 
-@connect(state => state.authData)
-export default class TeacherRegistration extends Component {
+const SUPPORTED_ORIENTATIONS = ['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right'];
 
-    constructor(props) {
-        super();
+class DatePicker extends Component {
+  constructor(props) {
+    super(props);
 
-        this.state = {
-            step: 0,
-            request: false,
-            lastName: '',
-            firstName: '',
-            patrName: '',
-            sex: null,
-            birthDate: null,
-            experience: null,
-            phoneNumber: '+7',
-            email: '',
-            areaId: null,
-            password: '',
-            confirmPassword: '',
-            cityName: null,
-            areaName: null,
-            confirmationCode: ''
-        }
-    }
-
-    renderError = () => {
-        if (!this.state.errors) return null;
-
-        return (
-            <View style={styles.errorWrapper}>
-                <View><Text style={styles.errorBold}>Ошибка: </Text></View>
-                {(() => this.state.errors.map((err, key) => <View key={key}><Text style={styles.error}>{err}</Text></View>))()}
-            </View>
-        )
+    this.state = {
+      date: this.getDate(),
+      modalVisible: false,
+      animatedHeight: new Animated.Value(0),
+      allowPointerEvents: true,
+      isPicker: false,
     };
 
-    teacherRegister() {
+    this.getDate = this.getDate.bind(this);
+    this.getDateStr = this.getDateStr.bind(this);
+    this.datePicked = this.datePicked.bind(this);
+    this.onPressDate = this.onPressDate.bind(this);
+    this.onPressCancel = this.onPressCancel.bind(this);
+    this.onPressConfirm = this.onPressConfirm.bind(this);
+    this.onDateChange = this.onDateChange.bind(this);
+    this.onPressMask = this.onPressMask.bind(this);
+    this.onDatePicked = this.onDatePicked.bind(this);
+    this.onTimePicked = this.onTimePicked.bind(this);
+    this.setModalVisible = this.setModalVisible.bind(this);
+  }
 
-        const data = {};
+  componentWillReceiveProps(nextProps) {
+    if (nextProps.date !== this.props.date) {
+      this.setState({date: this.getDate(nextProps.date)});
+    }
+  }
 
-        data.lastName = this.state.lastName;
-        data.firstName = this.state.firstName;
-        data.patrName = this.state.patrName;
-        data.sex = this.state.sex;
-        data.birthDate = this.state.birthDate;
-        data.experience = this.state.experience;
-        data.phoneNumber = this.state.phoneNumber;
-        data.email = this.state.email;
-        data.areaId = this.state.areaId;
-        data.password = this.state.password;
+  setModalVisible(visible) {
+    const {height, duration} = this.props;
 
-        this.setState({
-            errors: null,
-            request: true
-        });
+    // slide animation
+    if (visible) {
+      this.setState({modalVisible: visible});
+      return Animated.timing(
+        this.state.animatedHeight,
+        {
+          toValue: height,
+          duration: duration
+        }
+      ).start();
+    } else {
+      return Animated.timing(
+        this.state.animatedHeight,
+        {
+          toValue: 0,
+          duration: duration
+        }
+      ).start(() => {
+        this.setState({modalVisible: visible});
+      });
+    }
+  }
 
-        this.hash = null;
+  onStartShouldSetResponder(e) {
+    return true;
+  }
 
-        request({
-            url: '/api/teacherRegister',
-            method: 'POST',
-            data
-        }).then((response) => {
-            this.hash = response.hash;
+  onMoveShouldSetResponder(e) {
+    return true;
+  }
 
-            this.setState({
-                step: 1,
-                request: false
-            });
-        }).catch((response) => {
-            let errors = ['Что-то пошло не так. Проверьте соединение с интернетом и повторите попытку.'];
+  onPressMask() {
+    if (typeof this.props.onPressMask === 'function') {
+      this.props.onPressMask();
+    } else {
+      this.onPressCancel();
+    }
+  }
 
-            if (response.status && response.status == 409) {
-                errors = [JSON.parse(response.responseText).errorMessage]
-            }
+  onPressCancel() {
+    this.setModalVisible(false);
 
-            console.log(response);
-            this.setState({
-                errors,
-                request: false
-            });
-        });
+    if (typeof this.props.onCloseModal === 'function') {
+      this.props.onCloseModal();
+    }
+  }
+
+  onPressConfirm() {
+    this.datePicked();
+    this.setModalVisible(false);
+
+    if (typeof this.props.onCloseModal === 'function') {
+      this.props.onCloseModal();
+    }
+  }
+
+  getDate(date = this.props.date) {
+    const {mode, minDate, maxDate, format = FORMATS[mode]} = this.props;
+
+    // date默认值
+    if (!date) {
+      let now = new Date();
+      if (minDate) {
+        let _minDate = this.getDate(minDate);
+
+        if (now < _minDate) {
+          return _minDate;
+        }
+      }
+
+      if (maxDate) {
+        let _maxDate = this.getDate(maxDate);
+
+        if (now > _maxDate) {
+          return _maxDate;
+        }
+      }
+
+      return now;
     }
 
-    confirmRegister() {
-        this.setState({
-            errors: null,
-            request: true
-        });
-
-        request({
-            url: '/api/verifyRegistrationCode',
-            method: 'POST',
-            data: {
-                hash: this.hash,
-                confirmationCode: this.state.confirmationCode
-            }
-        }).then((response) => {
-            const {phoneNumber: login, password} = this.state;
-
-            repetitAppCore.authenticate({login, password})
-                .then(() => {
-                    this.props.navigator.navigate('TeacherCabinet');
-
-                    request({
-                        url: '/api/teacher/autologinUrl',
-                        data: {
-                            localPath: encodeURIComponent('/teacher/edit/photo')
-                        }
-                    }).then(url => {
-                        Linking.openURL(url)
-                    });
-                });
-
-
-
-        }).catch((response) => {
-            let errors = ['Что-то пошло не так. Проверьте соединение с интернетом и повторите попытку.'];
-
-            if (response.status && response.status == 400) {
-                errors = [JSON.parse(response.responseText).errorMessage]
-            }
-
-            console.log(response);
-            this.setState({
-                errors,
-                request: false
-            });
-            /*
-            console.log(response);
-            this.setState({
-                errors: ['Что-то пошло не так. Проверьте соединение с интернетом и повторите попытку.'],
-                request: false
-            })*/
-        });
+    if (date instanceof Date) {
+      return date;
     }
 
-    validate = () => {
-        let errors = [];
+    return Moment(date, format).toDate();
+  }
 
-        if (!this.state.firstName.length) {
-            errors.push('Укажите ваше имя.');
-        }
-        if (!this.state.lastName.length) {
-            errors.push('Укажите вашу фамилию.');
-        }
-        if (this.state.sex === null) {
-            errors.push('Укажите ваш пол.');
-        }
-        if (this.state.birthDate === null) {
-            errors.push('Укажите вашу дату рождения.');
-        } else if (moment().diff(moment(this.state.birthDate, 'DD.MM.YYYY'), 'years') < 18) {
-            errors.push('Для регистрации вы должны быть старше 18 лет.');
-        }
-        if (this.state.experience === null || !validators.number(this.state.experience)) {
-            errors.push('Укажите ваш стаж.');
-        }
-        if (!validators.cellPhone(this.state.phoneNumber)) {
-            errors.push('Не корректно указан номер телефона.');
-        }
-        if (!validators.email(this.state.email)) {
-            errors.push('Не корректно указан email.');
+  getDateStr(date = this.props.date) {
+    const {mode, format = FORMATS[mode]} = this.props;
 
-            bus.emit('log', {
-                method: 'TeacherRegistration.js',
-                message: 'Не корректно указан email при регистрации.',
-                stackTrace: 'TeacherRegistration.js',
-                data: this.state.email
-            });
-        }
-        if (this.state.areaId === null) {
-            errors.push('Укажите ваш регион.');
-        }
-        if (this.state.password.length < 6) {
-            errors.push('Минимальная длина пароля - 6 символов.');
-        } else if (this.state.password !== this.state.confirmPassword) {
-            errors.push('Поля «пароль» и «пароль еще раз» должны совпадать.');
-        }
+    const dateInstance = date instanceof Date
+      ? date
+      : this.getDate(date);
 
-        if (errors.length) {
-            this.setState({errors})
-        } else if (this.state.errors) {
-            this.setState({errors: null})
-        }
+    if (typeof this.props.getDateStr === 'function') {
+      return this.props.getDateStr(dateInstance);
+    }
 
-        return !errors.length;
-    };
+    return Moment(dateInstance).format(format);
+  }
 
-    render() {
+  datePicked() {
+    if (typeof this.props.onDateChange === 'function') {
+      this.props.onDateChange(this.getDateStr(this.state.date), this.state.date);
+    }
+  }
 
-        if (this.state.step === 1) {
-            return (
-                <Content style={styles.flexOne}>
-                    <Form style={styles.form}>
-                        <Text style={{padding: 15, paddingBottom: 5}}>{`На номер ${this.state.phoneNumber} отправлено СМС с кодом подтверждения. Для продолжения регистрации введите этот код.`}</Text>
-                        <Item stackedLabel>
-                            <Label style={styles.labelOpacity}>Код подтверждения</Label>
-                            <Input
-                                onChangeText={confirmationCode => this.setState({confirmationCode})}
-                                autoCorrect={false}
-                                style={styles.input}
-                                padding={0}
-                                keyboardType='phone-pad'
-                                value={this.state.confirmationCode}
-                                autoFocus={true}
-                            />
-                        </Item>
-                    </Form>
-                    {this.renderError()}
-                    <Button
-                        primary
-                        block
-                        style={styles.btn}
-                        onPress={() => {
-                            this.confirmRegister();
-                        }}
-                    >
-                        {this.state.request ? <Spinner size='small' color='white'/> : <Text>Подтвердить</Text>}
-                    </Button>
-                </Content>
-            )
-        }
+  getTitleElement() {
+    const {date, placeholder, customStyles, allowFontScaling} = this.props;
 
-        let maleButtonStyle = styles.sexRadioButtonMale;
-        let femaleButtonStyle = styles.sexRadioButtonFemale;
-        let maleButtonTextStyle = styles.sexRadioButtonText;
-        let femaleButtonTextStyle = styles.sexRadioButtonText;
+    if (!date && placeholder) {
+      return (
+        <Text allowFontScaling={allowFontScaling} style={[Style.placeholderText, customStyles.placeholderText]}>
+          {placeholder}
+        </Text>
+      );
+    }
+    return (
+      <Text allowFontScaling={allowFontScaling} style={[Style.dateText, customStyles.dateText]}>
+        {this.getDateStr()}
+      </Text>
+    );
+  }
 
-        if (this.state.sex == 1) {
-            maleButtonStyle = {...styles.sexRadioButtonMale, backgroundColor: colors.primaryColor};
-            maleButtonTextStyle = {...styles.sexRadioButtonText, color: 'white'};
-        } else if (this.state.sex == 2) {
-            femaleButtonStyle = {...styles.sexRadioButtonFemale, backgroundColor: colors.primaryColor};
-            femaleButtonTextStyle = {...styles.sexRadioButtonText, color: 'white'};
-        }
+  onDateChange(event,date) {
+    this.setState({
+      allowPointerEvents: false,
+      date: date
+    });
+    const timeoutId = setTimeout(() => {
+      this.setState({
+        allowPointerEvents: true
+      });
+      clearTimeout(timeoutId);
+    }, 200);
+  }
 
-        return (
-            <Content style={styles.flexOne}>
-                <Form style={styles.form}>
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Фамилия</Label>
-                        <Input
-                            onChangeText={lastName => this.setState({lastName})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.lastName}
-                            autoFocus={true}
-                        />
-                    </Item>
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Имя</Label>
-                        <Input
-                            onChangeText={firstName => this.setState({firstName})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.firstName}
-                        />
-                    </Item>
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Отчество</Label>
-                        <Input
-                            onChangeText={patrName => this.setState({patrName})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.patrName}
-                        />
-                    </Item>
-                    <Item style={styles.sex}>
-                        <Label style={styles.sexLabel}>Пол</Label>
-                        <View style={styles.sexRadioGroup}>
-                            <TouchableOpacity onPress={() =>  this.setState({sex: 1})} style={maleButtonStyle}>
-                                <Text style={maleButtonTextStyle}>Мужской</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() =>  this.setState({sex: 2})} style={femaleButtonStyle}>
-                                <Text style={femaleButtonTextStyle}>Женский</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </Item>
+  onDatePicked(event,date) {
+    if (date === undefined) {
+      this.setState({isPicker: false})
+    }else {
+      this.setState({
+        date: Moment(date),
+        isPicker: false
+      });
+      this.datePicked();
+    }
+  
+  }
 
-                    <Item stackedLabel style={styles.birthDate}>
-                        <Label style={styles.labelOpacity}>Дата рождения</Label>
-                        <View style={styles.datePickerWrapper}>
-                            <DatePicker
-                                ref='datePicker'
-                                style={styles.datePicker}
-                                display={'spinner'}
-                                date={this.state.birthDate ? moment(this.state.birthDate, 'DD.MM.YYYY') : false}
-                                //minDate={moment().startOf('day').add(1, 'days')}
-                                placeholder={'укажите дату'}
-                                format='D MMMM YYYY г'
-                                confirmBtnText='Готово'
-                                cancelBtnText='Отмена'
-                                onDateChange={(d, rawDate) => {
-                                    const birthDate = moment(rawDate).startOf('day').format('DD.MM.YYYY');
-                                    this.setState({birthDate})
-                                }}
-                                showIcon={false}
-                                customStyles={{
-                                    ...dateInputStyle,
-                                    dateInput: {...dateInputStyle.dateInput, alignItems: 'flex-start'}
-                                }}
-                            />
-                        </View>
-                    </Item>
+  onTimePicked(event, time) {
+    if (time === undefined) {
+      this.setState({isPicker: false})
+    }else{
+      this.setState({
+        date: Moment(time),
+        isPicker: false
+      });
+      this.datePicked();
+    }
+  }
 
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Стаж (лет)</Label>
-                        <Input
-                            onChangeText={experience => this.setState({experience})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            keyboardType='phone-pad'
-                            value={this.state.experience}
-                        />
-                    </Item>
+  onPressDate() {
+    if (this.props.disabled) {
+      return true;
+    }
 
-                    <PhoneInput
-                        autoCorrect={false}
-                        value={this.state.phoneNumber}
-                        onChangeText={phoneNumber => this.setState({phoneNumber})}
-                    />
+    Keyboard.dismiss();
 
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Email</Label>
-                        <Input
-                            onChangeText={email => this.setState({email: email.trim()})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.email}
-                        />
-                    </Item>
+    // reset state
+    this.setState({
+      date: this.getDate(),
+      isPicker: true
+    });
 
-                    <Item stackedLabel style={styles.selectArea}>
-                        <Label style={styles.labelOpacity}>Регион</Label>
-                        <TouchableOpacity
-                            onPress={() => {
-                                this.props.navigator.navigate('SelectArea', {
-                                    onSelect: area => {
-                                        let areaId = area.id;
-                                        let [cityName, areaName] = area.name.split(' и ');
+    if (Platform.OS === 'ios') {
+      this.setModalVisible(true);
+    }
 
-                                        this.setState({areaId, cityName, areaName})
-                                    }
-                                })
-                            }}
-                            style={styles.selectedArea}
-                        >
-                            {(() => {
-                                if (this.state.areaId) {
-                                    return [
-                                        <Text style={styles.city}>{this.state.cityName}</Text>,
-                                        <Text style={styles.area}>{this.state.areaName}</Text>
-                                    ];
-                                }
+    if (typeof this.props.onOpenModal === 'function') {
+      this.props.onOpenModal();
+    }
+  }
 
-                                return <Text>выберите регион</Text>
-                            })()}
+  _renderIcon() {
+    const {
+      showIcon,
+      iconSource,
+      iconComponent,
+      customStyles
+    } = this.props;
 
-                        </TouchableOpacity>
-                    </Item>
+    if (showIcon) {
+      if (iconComponent) {
+        return iconComponent;
+      }
+      return (
+        <Image
+          style={[Style.dateIcon, customStyles.dateIcon]}
+          source={iconSource}
+        />
+      );
+    }
 
+    return null;
+  }
 
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Пароль</Label>
-                        <Input
-                            secureTextEntry={true}
-                            onChangeText={password => this.setState({password})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.password}
-                        />
-                    </Item>
-                    <Item stackedLabel>
-                        <Label style={styles.labelOpacity}>Пароль еще раз</Label>
-                        <Input
-                            secureTextEntry={true}
-                            onChangeText={confirmPassword => this.setState({confirmPassword})}
-                            autoCorrect={false}
-                            style={styles.input}
-                            padding={0}
-                            value={this.state.confirmPassword}
-                        />
-                    </Item>
-                </Form>
-                {this.renderError()}
-                <Button
-                    primary
-                    block
-                    style={styles.btn}
-                    onPress={() => {
-                        if (this.validate()) {
-                            this.teacherRegister()
-                        }
-                    }}
+  render() {
+    const {
+      mode,
+      style,
+      customStyles,
+      disabled,
+      minDate,
+      maxDate,
+      minuteInterval,
+      timeZoneOffsetInMinutes,
+      cancelBtnText,
+      confirmBtnText,
+      TouchableComponent,
+      testID,
+      cancelBtnTestID,
+      confirmBtnTestID,
+      allowFontScaling,
+      locale,
+      display = 'default'
+    } = this.props;
+
+    const dateInputStyle = [
+      Style.dateInput, customStyles.dateInput,
+      disabled && Style.disabled,
+      disabled && customStyles.disabled
+    ];
+
+    return (
+      <TouchableComponent
+        style={[Style.dateTouch, style]}
+        underlayColor={'transparent'}
+        onPress={this.onPressDate}
+        testID={testID}
+      >
+        <View style={[Style.dateTouchBody, customStyles.dateTouchBody]}>
+          {
+            !this.props.hideText ?
+              <View style={dateInputStyle}>
+                {this.getTitleElement()}
+              </View>
+            :
+              <View/>
+          }
+          {this._renderIcon()}
+          {Platform.OS === 'ios' && <Modal
+            transparent={true}
+            animationType="none"
+            visible={this.state.modalVisible}
+            supportedOrientations={SUPPORTED_ORIENTATIONS}
+            onRequestClose={() => {this.setModalVisible(false);}}
+          >
+            <View
+              style={{flex: 1}}
+            >
+              <TouchableComponent
+                style={Style.datePickerMask}
+                activeOpacity={1}
+                underlayColor={'#00000077'}
+                onPress={this.onPressMask}
+              >
+                <TouchableComponent
+                  underlayColor={'#fff'}
+                  style={{flex: 1}}
                 >
-                    {this.state.request ? <Spinner size='small' color='white'/> : <Text>Зарегистрироваться</Text>}
-                </Button>
-            </Content>
-        )
-    }
+                  <Animated.View
+                    style={[Style.datePickerCon, {height: this.state.animatedHeight}, customStyles.datePickerCon]}
+                  >
+                    <View pointerEvents={this.state.allowPointerEvents ? 'auto' : 'none'}>
+                      <DateTimePicker
+                        value={this.state.date}
+                        mode={mode}
+                        minimumDate={minDate && this.getDate(minDate)}
+                        maximumDate={maxDate && this.getDate(maxDate)}
+                        onChange={this.onDateChange}
+                        minuteInterval={minuteInterval}
+                        timeZoneOffsetInMinutes={timeZoneOffsetInMinutes ? timeZoneOffsetInMinutes : null}
+                        style={[Style.datePicker, customStyles.datePicker]}
+                        locale={locale}
+                      />
+                    </View>
+                    <TouchableComponent
+                      underlayColor={'transparent'}
+                      onPress={this.onPressCancel}
+                      style={[Style.btnText, Style.btnCancel, customStyles.btnCancel]}
+                      testID={cancelBtnTestID}
+                    >
+                      <Text
+                        allowFontScaling={allowFontScaling}
+                        style={[Style.btnTextText, Style.btnTextCancel, customStyles.btnTextCancel]}
+                      >
+                        {cancelBtnText}
+                      </Text>
+                    </TouchableComponent>
+                    <TouchableComponent
+                      underlayColor={'transparent'}
+                      onPress={this.onPressConfirm}
+                      style={[Style.btnText, Style.btnConfirm, customStyles.btnConfirm]}
+                      testID={confirmBtnTestID}
+                    >
+                      <Text allowFontScaling={allowFontScaling}
+                            style={[Style.btnTextText, customStyles.btnTextConfirm]}
+                      >
+                        {confirmBtnText}
+                      </Text>
+                    </TouchableComponent>
+                  </Animated.View>
+                </TouchableComponent>
+              </TouchableComponent>
+            </View>
+          </Modal>}
+          {(mode === 'time' && this.state.isPicker)?<DateTimePicker display={display} mode="time" value={this.state.date} onChange={this.onTimePicked}/>:null}
+          {(mode === 'date' && this.state.isPicker)?<DateTimePicker display={display} mode="date" minimumDate={minDate && this.getDate(minDate)} maximumDate={maxDate && this.getDate(maxDate)} value={this.state.date} onChange={this.onDatePicked}/>:null}
+        </View>
+      </TouchableComponent>
+    );
+  }
 }
 
-const dateInputStyle = {
-    dateInput: {
-        borderWidth: 0,
-        alignSelf: 'stretch',
-        height: 20,
-    },
-    dateText: {
-        marginTop: 1,
-        textAlign: 'left',
-        fontSize: 16,
-        lineHeight: 16,
-        color: 'black'
-    },
-    placeholderText: {
-        marginTop: 1,
-        fontSize: 16,
-        lineHeight: 16,
-        color: 'black'
-    },
-    btnTextConfirm: {
-        height: 20
-    },
-    btnTextCancel: {
-        height: 20
-    }
+DatePicker.defaultProps = {
+  mode: 'date',
+  androidMode: 'default',
+  date: '',
+  // component height: 216(DatePickerIOS) + 1(borderTop) + 42(marginTop), IOS only
+  height: 259,
+
+  // slide animation duration time, default to 300ms, IOS only
+  duration: 300,
+  confirmBtnText: '确定',
+  cancelBtnText: '取消',
+  iconSource: require('./date_icon.png'),
+  customStyles: {},
+
+  // whether or not show the icon
+  showIcon: true,
+  disabled: false,
+  allowFontScaling: true,
+  hideText: false,
+  placeholder: '',
+  TouchableComponent: TouchableHighlight,
+  modalOnResponderTerminationRequest: e => true
 };
 
-
-const styles = {
-
-    sex: {
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-        borderBottomWidth: 0
-    },
-    sexLabel: {
-        fontSize: 15,
-        marginTop: 12,
-        opacity: .85
-    },
-    sexRadioGroup: {
-        flexDirection: 'row',
-        marginRight: 15,
-        marginVertical: 5
-    },
-    sexRadioButtonMale: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: 6,
-        borderWidth: 1,
-        borderColor: colors.primaryColor,
-        backgroundColor: 'white',
-        borderBottomLeftRadius: 2,
-        borderTopLeftRadius: 2,
-        borderRightWidth: 0
-    },
-    sexRadioButtonFemale: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: 6,
-        borderWidth: 1,
-        borderColor: colors.primaryColor,
-        backgroundColor: 'white',
-        borderBottomRightRadius: 2,
-        borderTopRightRadius: 2
-    },
-    sexRadioButtonText: {
-        fontSize: 15,
-        color: colors.primaryColor
-    },
-    labelOpacity: {
-        opacity: .85
-    },
-    birthDate: {
-        flexDirection: 'column',
-        alignItems: 'flex-start'
-    },
-    datePickerWrapper: {
-        marginBottom: 10,
-        marginTop: 15,
-        flex: 1,
-        height: 20,
-        width: '100%'
-    },
-    selectArea: {
-        flexDirection: 'column',
-        alignItems: 'flex-start'
-    },
-    selectedArea: {
-        marginRight: 15,
-        marginVertical: 10
-    },
-
-    datePicker: {
-        width: '100%',
-        height: 21
-    },
-    input: {
-        marginLeft: 0
-    },
-    btn: {
-        marginTop: 15,
-        marginBottom: 30
-    },
-    flexOne: {
-        flex: 1,
-        padding: 15
-    },
-    form: {
-        margin: -15,
-        marginBottom: 0
-    },
-    /*finalText: {
-        fontFamily: 'Roboto-Light',
-        color: colors.textGray
-    },*/
-    /*finalTextBold: {
-        fontFamily: 'Roboto-Medium',
-        color: 'black'
-    },*/
-    errorWrapper: {
-        marginTop: 15
-    },
-    errorBold: {
-        color: colors.dangerColor,
-        fontFamily: 'Roboto-Medium'
-    },
-    error: {
-        color: colors.dangerColor,
-        fontFamily: 'Roboto-Light'
-    },
-    city: {
-        fontSize: 16,
-        fontFamily: 'Roboto-Medium',
-        color: 'black'
-    },
-    area: {
-        fontSize: 14,
-        fontFamily: 'Roboto-Light',
-        color: '#777'
-    },
-    webView: {
-        flex: 1
-    }
+DatePicker.propTypes = {
+  mode: PropTypes.oneOf(['date', 'datetime', 'time']),
+  androidMode: PropTypes.oneOf(['clock', 'calendar', 'spinner', 'default']),
+  date: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date), PropTypes.object]),
+  format: PropTypes.string,
+  minDate: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+  maxDate: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+  height: PropTypes.number,
+  duration: PropTypes.number,
+  confirmBtnText: PropTypes.string,
+  cancelBtnText: PropTypes.string,
+  iconSource: PropTypes.oneOfType([PropTypes.number, PropTypes.object]),
+  iconComponent: PropTypes.element,
+  customStyles: PropTypes.object,
+  showIcon: PropTypes.bool,
+  disabled: PropTypes.bool,
+  allowFontScaling: PropTypes.bool,
+  onDateChange: PropTypes.func,
+  onOpenModal: PropTypes.func,
+  onCloseModal: PropTypes.func,
+  onPressMask: PropTypes.func,
+  placeholder: PropTypes.string,
+  modalOnResponderTerminationRequest: PropTypes.func,
+  is24Hour: PropTypes.bool,
+  getDateStr: PropTypes.func,
+  locale: PropTypes.string
 };
+
+export default DatePicker;
