@@ -265,7 +265,7 @@ class DatePicker extends Component {
   }
 
   render() {
-    const {
+    let {
       mode,
       style,
       customStyles,
@@ -284,6 +284,10 @@ class DatePicker extends Component {
       locale,
       display = 'default'
     } = this.props;
+
+    if (Platform.OS === 'ios' && Platform.Version >= 14) {
+        display = 'spinner';
+    }
 
     const dateInputStyle = [
       Style.dateInput, customStyles.dateInput,
@@ -342,6 +346,7 @@ class DatePicker extends Component {
                         timeZoneOffsetInMinutes={timeZoneOffsetInMinutes ? timeZoneOffsetInMinutes : null}
                         style={[Style.datePicker, customStyles.datePicker]}
                         locale={locale}
+                        display={display}
                       />
                     </View>
                     <TouchableComponent
